@@ -29,7 +29,7 @@ function setData(rRoll, rSource, aTargets)
 	end
 
     --Populate diecontrol with appropriate dice, otherwise add a d20
-    if ActionsManager.doesRollHaveDice(rRoll) then
+    if rRoll.aDice then
         for i=1,table.getn(rRoll.aDice),1 do
             local die = ""
             if type(rRoll.aDice[i]) ~= "string" then
@@ -39,7 +39,9 @@ function setData(rRoll, rSource, aTargets)
             end
             drag_roll.addDie(die)
         end
-    else
+    end
+
+    if drag_roll.isEmpty() then
         drag_roll.addDie("d20")
     end
 
@@ -103,7 +105,7 @@ function processRollMods()
 
     applyClientModifiers();
     if Interface.getRuleset()=="5E" then
-        Debug.console(1)
+
         local bButtonADV = ModifierManager.getKey("ADV");
         local bButtonDIS = ModifierManager.getKey("DIS");
         local bADV = string.match(vRoll.sDesc, "%[ADV%]");
@@ -116,7 +118,6 @@ function processRollMods()
         --if the buttons introduce a modifier that would cancel what is already applied, add the appropriate text and remove the extra die that was added
         if not (bADV and bDIS) then
             if not bADV and not bDIS then
-                Debug.console(vRoll.aDice)
                 if vRoll.aDice[1] == "d20" then
                     ActionsManager2.encodeAdvantage(vRoll,bButtonADV,bButtonDIS);
                 end
