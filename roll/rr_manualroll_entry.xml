@@ -24,6 +24,10 @@
 	    <script file="roll/scripts/rr_manualroll_entry.lua" />
         <sheetdata>
             <hs name="CTNodeID"/>
+            <button_dialog_fauxroll name="button_fauxroll">
+                <anchored to="button_ok" position="lefthigh" offset="-1,-30" />
+                <gmvisibleonly />
+            </button_dialog_fauxroll>
             <drag_roll_button name="drag_roll">
                 <anchored to="button_ok" position="aboveleft" offset="0,-5" />
             </drag_roll_button>
