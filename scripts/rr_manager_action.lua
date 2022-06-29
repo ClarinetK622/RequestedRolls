@@ -1,10 +1,22 @@
 --Overrides the function ActionsManger.roll so that the popup roll page can be managed just like manual rolls
 --Added original function to fall through if not overridden
 local fRollOriginal = nil;
+local fonTowerDrop = nil;
+local fchatOnDrop = nil;
 
 function onInit()
 	fRollOriginal = ActionsManager.roll;
     ActionsManager.roll = rollOverride;
+
+    --New overrides
+    fonTowerDrop = DiceTowerManager.onDrop;
+    DiceTowerManager.onDrop = towerDropOverride;
+    fchatOnDrop = ChatManager.onDrop
+    ChatManager.onDrop = chatDropOverride
+    ActionsManager.actionDrop = dropOverride;
+    ActionsManager.actionRoll = actionRollOverride;
+    ActionsManager.applyModifiersAndRoll = applyModifiersAndRollOverride;
+
 	OOBManager.registerOOBMsgHandler(OOB_MSGTYPE_APPLYROLL, handleApplyRollRR);
 	OOBManager.registerOOBMsgHandler(OOB_MSGTYPE_ALLROLLS, handleAllRollsRR);
 end
@@ -76,6 +88,232 @@ function isPopupSaveDesc(sDesc)
 	return false;
 end
 
+--Set modifiers to false
+function resetMods()
+	if not ModifierManager.isLocked() then
+		ModifierManager.setKey("ADV",false)
+		ModifierManager.setKey("DIS",false)
+		ModifierManager.setKey("PLUS2",false)
+		ModifierManager.setKey("MINUS2",false)
+		ModifierManager.setKey("PLUS5",false)
+		ModifierManager.setKey("MINUS5",false)
+		ModifierStack.reset()
+	end
+end
+
+--Encode mods in rRoll.sDesc similar to ActionsManager2.encodeDesktopMods but without adding to rRoll.nMod (for SAVE VS rolls this modifies the DC) and adds a call to resetMods
+function encodeMods(rRoll)
+	local nMod = 0;
+	
+	if ModifierManager.getKey("PLUS2") then
+		nMod = nMod + 2;
+	end
+	if ModifierManager.getKey("MINUS2") then
+		nMod = nMod - 2;
+	end
+	if ModifierManager.getKey("PLUS5") then
+		nMod = nMod + 5;
+	end
+	if ModifierManager.getKey("MINUS5") then
+		nMod = nMod - 5;
+	end
+
+	nMod = nMod + ModifierStack.getSum()
+	
+	resetMods()
+
+	if nMod == 0 then
+		return;
+	end
+
+	rRoll.sDesc = rRoll.sDesc .. string.format(" [%+d]", nMod);
+end
+
+--Transfer host mods from sSaveDesc to sDesc
+function transferMods(rRoll)
+	if Interface.getRuleset()=="5E" and rRoll.aDice[1] == "d20" then
+
+		local modTotal = 0
+		local sDescADV = string.match(rRoll.sDesc, "%[ADV%]")
+		local sDescDIS = string.match(rRoll.sDesc, "%[DIS%]")
+
+		if rRoll.sSaveDesc then
+
+			local bADV = string.match(rRoll.sSaveDesc, "%[ADV%]");
+			local bDIS = string.match(rRoll.sSaveDesc, "%[DIS%]");
+			local bPlusMod = string.match(rRoll.sSaveDesc, "%[%+%d+%]")
+			local bMinusMod = string.match(rRoll.sSaveDesc, "%[%-%d+%]")
+
+			if (bADV or bDIS) then
+				--If neither ADV nor DIS are pre-encoded and ADV and DIS buttons are not simultaneously pressed add one die
+				if (not sDescADV and not sDescDIS) and not (bADV and bDIS) then
+					table.insert(rRoll.aDice, 2, rRoll.aDice[1]);
+					rRoll.aDice.expr = nil;
+				--If contradictory ADV DIS apply, remove die
+				elseif (sDescADV and bDIS) or (sDescDIS and bADV) then
+					table.remove(rRoll.aDice, 2);
+				end
+				if bADV then
+	                rRoll.sDesc = rRoll.sDesc .. " [ADV]";
+	            end
+	            if bDIS then
+	                rRoll.sDesc = rRoll.sDesc .. " [DIS]";
+	            end
+			end
+			--Handle and encode modifiers
+			if (bPlusMod or bMinusMod) then
+				if bPlusMod then
+					local modNum = tonumber(string.match(bPlusMod, "[^%[%]%+]+"))
+					modTotal = modTotal + modNum
+	            else
+	            	local modNum = tonumber(string.match(bMinusMod, "[^%[%]%-]+"))
+					modTotal = modTotal - modNum
+	            end
+				_,_, rRoll.sDesc = string.find(rRoll.sDesc, "(.*) %[[+-]%d+%]")
+			end
+		end
+		if modTotal ~= 0 then
+			if modTotal > 0 then
+				rRoll.sDesc = rRoll.sDesc .. " [+" .. tostring(modTotal) .. "]";
+			else
+				rRoll.sDesc = rRoll.sDesc .. " [" .. tostring(modTotal) .. "]";
+			end
+        end
+		if rRoll.nMod then
+			rRoll.nMod = rRoll.nMod + modTotal
+		end
+	end
+end
+
+--Overrides the onDrop function in DiceTowerManager to allow rerouting of roll to standard dropOverride
+function towerDropOverride(draginfo)
+	if draginfo.bRR then
+		draginfo.bTower = true
+		dropOverride(draginfo)
+		return true
+	end
+	return fonTowerDrop(draginfo)
+end
+
+--Overrides the onDrop function of ChatManager to interrupt and reroute throw to standard dropOverride
+function chatDropOverride(draginfo)
+	if draginfo.bTower then
+		dropOverride(draginfo, rTarget)
+		return true
+	else
+		return fchatOnDrop(draginfo)
+	end
+end
+
+--Overrides actionDrop function of ActionsManager to appropriately handle dragged RR rolls
+function dropOverride(draginfo, rTarget)
+	local sDragType = draginfo.getType();
+	if not GameSystem.actions[sDragType] then
+		return false;
+	end
+	
+	local rSource, rRolls = ActionsManager.decodeActionFromDrag(draginfo, false);
+
+	--Start inserted code
+	--Decode RR metadata from draginfo and repopulate global vars
+	if draginfo.bRR then
+		vRoll = rRolls[1]
+		vRoll.bTower = draginfo.bTower
+		vSource = draginfo.vSource
+		vTargets = draginfo.vTargets
+
+		--Close roll entry window
+		if draginfo.window then
+			draginfo.window.close();
+		end
+
+		if vRoll.bTower then
+			RRTowerManager.sendTower(vRoll, vSource, vTargets);
+			return true
+		end
+
+		--Throw dice if roll is not hidden
+		local rThrow = ActionsManager.buildThrow(vSource, vTargets, vRoll, true);
+		Comm.throwDice(rThrow);
+		return true
+	end
+
+	local aTargeting = {};
+	if rTarget or ModifierStack.getTargeting() then
+		aTargeting = ActionsManager.getTargeting(rSource, rTarget, sDragType, rRolls);
+	else
+		aTargeting = { { } };
+	end
+
+	actionRollOverride(rSource, aTargeting, rRolls, draginfo);
+		
+	return true;
+end
+
+--Overrides actionRoll function of ActionsManager to pass through draginfo with RR metadata and clear modifiers after performing or requesting roll
+function actionRollOverride(rSource, vTarget, rRolls, draginfo)
+	local bModStackUsed = false;
+	ActionsManager.lockModifiers();
+	
+	for _,vTargetGroup in ipairs(vTarget) do
+		for _,vRoll in ipairs(rRolls) do
+			if applyModifiersAndRollOverride(rSource, vTargetGroup, true, vRoll, draginfo) then
+				bModStackUsed = true;
+			end
+		end
+	end
+	
+	ActionsManager.unlockModifiers(bModStackUsed);
+	resetMods()
+end
+
+--Override of applyModifiersAndRoll function of ActionsManager to pass through draginfo with RR metadata
+function applyModifiersAndRollOverride(rSource, vTarget, bMultiTarget, rRoll, draginfo)
+	
+	--Reset mods prior to encoding modifiers if receiving a SAVE VS popup
+	if rRoll.sSaveDesc and isPopupSaveDesc(rRoll.sSaveDesc) then
+		resetMods()
+	end
+	
+	local rNewRoll = UtilityManager.copyDeep(rRoll);
+	local bModStackUsed = false;
+
+	if bMultiTarget then
+		if vTarget and #vTarget == 1 then
+			bModStackUsed = ActionsManager.applyModifiers(rSource, vTarget[1], rNewRoll);
+		else
+			-- Only apply non-target specific modifiers before roll
+			bModStackUsed = ActionsManager.applyModifiers(rSource, nil, rNewRoll);
+		end
+	else
+		bModStackUsed = ActionsManager.applyModifiers(rSource, vTarget, rNewRoll);
+	end
+
+	--If roll originates from an RR drag, trigger draggedRoll function, otherwise pass to overridden ActionsManager.roll
+	if draginfo ~= nil and draginfo.bRR then
+		draggedRoll(rSource, vTarget, rRoll, bMultiTarget);
+	else
+		ActionsManager.roll(rSource, vTarget, rNewRoll, bMultiTarget);
+	end
+	
+	return bModStackUsed;
+end
+
+function draggedRoll(rSource, vTargets, rRoll, bMultiTarget)
+	if ActionsManager.doesRollHaveDice(rRoll) then
+		DiceManager.onPreEncodeRoll(rRoll);
+		
+		local rThrow = ActionsManager.buildThrow(rSource, vTargets, rRoll, bMultiTarget);
+		Comm.throwDice(rThrow);
+	else
+		if bMultiTarget then
+			ActionsManager.handleResolution(rRoll, rSource, vTargets);
+		else
+			ActionsManager.handleResolution(rRoll, rSource, { vTargets });
+		end
+	end
+end 
+
 ---Overrides the roll function in ActionManager so that we can add RR rolls after all normal processing has happened
 ---@param rSource table mirrors original function
 ---@param vTargets table|nil mirrors original function
@@ -93,31 +331,43 @@ function rollOverride(rSource, vTargets, rRoll, bMultiTarget)
 		end
 	end
 
-	if ActionsManager.doesRollHaveDice(rRoll) and not bBypass then
-		DiceManager.onPreEncodeRoll(rRoll);
-		--start where the new code is inserted
-		--Checks if this save could be a roll that needs to be added but wasn't generated from console
-		--For VS rolls, it is assumed they are already executing on the intended client for PC rolls
-		--For NPC VS rolls, we have to send these as popups to the relevant client
-		if rRoll.sSaveDesc and isPopupSaveDesc(rRoll.sSaveDesc) then
-			if Session.IsHost == true and sOwner then
-				rRoll.RR = true;
-				rRoll.bPopup = true;
-			else
-				if Session.IsHost == true then
-					if (RR.isManualSaveRollPcOn() and ActorManager.isPC(rSource)) or (RR.isManualSaveRollNpcOn() and not ActorManager.isPC(rSource)) then
-						ManualRollManager.addRoll(rRoll, rSource, vTargets);
-						return;
-					end
+	--If recieving a tower throw, do not catch and show host popup
+	if not bBypass then
+		bBypass = rRoll.bReturnTower
+	end
+
+	--Transfer host mods from sSaveDesc even if bypassing
+	if ActionsManager.doesRollHaveDice(rRoll) then
+
+		--Reset client mods before encoding roll
+		resetMods()
+		transferMods(rRoll)
+
+		if not bBypass then
+			DiceManager.onPreEncodeRoll(rRoll);
+			--start where the new code is inserted
+			--Checks if this save could be a roll that needs to be added but wasn't generated from console
+			--For VS rolls, it is assumed they are already executing on the intended client for PC rolls
+			--For NPC VS rolls, we have to send these as popups to the relevant client
+			if rRoll.sSaveDesc and isPopupSaveDesc(rRoll.sSaveDesc) then
+				if Session.IsHost == true and sOwner then
+					rRoll.RR = true;
+					rRoll.bPopup = true;
 				else
-					if RR.isManualSaveRollPcOn() then
-						ManualRollManager.addRoll(rRoll, rSource, vTargets);
-						return;
+					if Session.IsHost == true then
+						if (RR.isManualSaveRollPcOn() and ActorManager.isPC(rSource)) or (RR.isManualSaveRollNpcOn() and not ActorManager.isPC(rSource)) then
+							ManualRollManager.addRoll(rRoll, rSource, vTargets);
+							return;
+						end
+					else
+						if RR.isManualSaveRollPcOn() then
+							ManualRollManager.addRoll(rRoll, rSource, vTargets);
+							return;
+						end
 					end
 				end
 			end
 		end
-
 		--death auto and concentration rolls originate on host. They need to be sent to the players to check for the popup setting
 		--stabilization is for 3.5E and PFRPG1 and 2
 		if Session.IsHost == true then
@@ -135,7 +385,14 @@ function rollOverride(rSource, vTargets, rRoll, bMultiTarget)
 		--end of new code insertion
 	end
 	--pass through if it wasn't caught to be displayed to user
-	fRollOriginal(rSource, vTargets, rRoll, bMultiTarget);
+
+	--Encode host advantage if there are no dice (SAVE VS)
+	if not ActionsManager.doesRollHaveDice(rRoll) then
+		ActionsManager2.encodeAdvantage(rRoll,bButtonADV,bButtonDIS)
+		encodeMods(rRoll)
+	end
+
+	return fRollOriginal(rSource, vTargets, rRoll, bMultiTarget);
 end
 
 ---Processes console rolls received
@@ -202,6 +459,12 @@ function deOOBifyAction(msgOOB)
 	if vTargets and #vTargets==0 then
 		vTargets=nil;
 	end
+
+	--clear client mods
+	if rRoll.RR then
+		resetMods()
+	end
+
 	return rRoll, rSource, vTargets;
 end
 

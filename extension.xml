@@ -2,9 +2,9 @@
 
 <root version="3.0">
 	<properties>
-		<name>Requested Rolls</name>
+		<name>Requested Rolls (Drag)</name>
 		<version>2.8</version>
-		<author>mccartysr</author>
+		<author>mccartysr/teniralc</author>
 		<description>Requested Rolls</description>
 		<loadorder>5</loadorder>
 		<ruleset>
@@ -40,7 +40,7 @@
 			<minrelease>22</minrelease>
 		</ruleset>
 	</properties>
-	<announcement text="Requested Rolls version 2.8 by mccartysr, 2022\rFor slash commands type /RR" font="emotefont" icon="Logo_Mccartysr"/>>
+	<announcement text="Requested Rolls (Drag) version 2.8 by mccartysr/teniralc, 2022\rFor slash commands type /RR" font="emotefont" icon="Logo_Mccartysr"/>>
 	<base>		
 		<includefile source="xml/rr_resources.xml" />
 	</base>    

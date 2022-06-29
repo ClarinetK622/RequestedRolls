@@ -15,6 +15,10 @@ function setData(rRoll, rSource, aTargets)
     end
 
     super.setData(rRoll, rSource, aTargets);
+
+    --Normal roll button is overridden by new diecontrol
+    button_roll.setVisible(false)
+
 	if OptionsManager.isOption("MANUALROLL", "off") and OptionsManager.isOption("RR_option_label_alwaysShowManualDice", "off") then
 		hideDiceList();
 	end
@@ -23,14 +27,31 @@ function setData(rRoll, rSource, aTargets)
 		rollexpr.setValue(rRoll.aDice.expr)
 		hideDiceList();
 	end
+
+    --Populate diecontrol with appropriate dice, otherwise add a d20
+    if ActionsManager.doesRollHaveDice(rRoll) then
+        for i=1,table.getn(rRoll.aDice),1 do
+            local die = ""
+            if type(rRoll.aDice[i]) ~= "string" then
+                die = rRoll.aDice[i]["type"]
+            else
+                die = rRoll.aDice[i]
+            end
+            drag_roll.addDie(die)
+        end
+    else
+        drag_roll.addDie("d20")
+    end
+
 end
 
 function hideDiceList()
 	list.setVisible(false);
 	button_ok.setVisible(false);
 	button_fauxroll.setVisible(false);
-	button_roll.resetAnchor("left");
-	button_roll.setAnchor("right","","right","relative",-5);
+    --replace button_roll with drag_roll diecontrol
+    drag_roll.resetAnchor("left");
+    drag_roll.setAnchor("right","","right","relative",-5);
 end
 
 ---Adds a check to the manual roll window that closes it if you are rolling the last roll in your queue.
@@ -65,40 +86,63 @@ function processCancel()
 	close();
 end
 
----Override function if roll is for tower, otherwise it passes it through
-function processRoll()
+--Encode RR metadata into draginfo so roll info can be recovered after drag
+function drag(draginfo)
+    draginfo.bRR = true;
+    draginfo.window = self
+    draginfo.bTower = vRoll.bTower
+    draginfo.vSource = vSource
+    draginfo.vTargets = vTargets
+    processRollMods();
+    ActionsManager.encodeActionForDrag(draginfo, vSource, "dice", {vRoll});
+end
+
+--Move mod processing to function so it can be reused during either click or drag
+function processRollMods()
     if RR.bDebug then Debug.chat("vRoll",vRoll); end
 
-	applyClientModifiers();
-	if Interface.getRuleset()=="5E" then
+    applyClientModifiers();
+    if Interface.getRuleset()=="5E" then
+        Debug.console(1)
+        local bButtonADV = ModifierManager.getKey("ADV");
+        local bButtonDIS = ModifierManager.getKey("DIS");
+        local bADV = string.match(vRoll.sDesc, "%[ADV%]");
+        local bDIS = string.match(vRoll.sDesc, "%[DIS%]");
+        if RR.bDebug then Debug.chat(bADV, bDIS,bButtonADV, bButtonDIS); end
 
-		local bButtonADV = ModifierManager.getKey("ADV");
-		local bButtonDIS = ModifierManager.getKey("DIS");
-		local bADV = string.match(vRoll.sDesc, "%[ADV%]");
-		local bDIS = string.match(vRoll.sDesc, "%[DIS%]");
-		if RR.bDebug then Debug.chat(bADV, bDIS,bButtonADV, bButtonDIS); end
+        --if ADV and DIS are both already applied, skip this code
+        --if ADV and DIS are both not applied, encode advantage as normal. We have to pass the button values 
+        --  becuase we already consumed them to make sure they reset every roll. Only encode advantage if the first die is a d20.
+        --if the buttons introduce a modifier that would cancel what is already applied, add the appropriate text and remove the extra die that was added
+        if not (bADV and bDIS) then
+            if not bADV and not bDIS then
+                Debug.console(vRoll.aDice)
+                if vRoll.aDice[1] == "d20" then
+                    ActionsManager2.encodeAdvantage(vRoll,bButtonADV,bButtonDIS);
+                end
+            else
+                if (bADV and bButtonDIS) or (bDIS and bButtonADV) then
+                    if bADV then
+                        vRoll.sDesc = vRoll.sDesc .. " [DIS]";
+                    else
+                        vRoll.sDesc = vRoll.sDesc .. " [ADV]";
+                    end
+                    table.remove(vRoll.aDice,2);
+                end
+            end
+        end
+    end
+end
 
-		--if ADV and DIS are both already applied, skip this code
-		--if ADV and DIS are both not applied, encode advantage as normal. We have to pass the button values 
-		--  becuase we already consumed them to make sure they reset every roll. Only encode advantage if the first die is a d20.
-		--if the buttons introduce a modifier that would cancel what is already applied, add the appropriate text and remove the extra die that was added
-		if not (bADV and bDIS) then
-			if not bADV and not bDIS then
-				if vRoll.aDice[1] == "d20" then
-					ActionsManager2.encodeAdvantage(vRoll,bButtonADV,bButtonDIS);
-				end
-			else
-				if (bADV and bButtonDIS) or (bDIS and bButtonADV) then
-					if bADV then
-						vRoll.sDesc = vRoll.sDesc .. " [DIS]";
-					else
-						vRoll.sDesc = vRoll.sDesc .. " [ADV]";
-					end
-					table.remove(vRoll.aDice,2);
-				end
-			end
-		end
-	end
+---Override function if roll is for tower, otherwise it passes it through
+function processRoll()
+
+    processRollMods()
+    
+    --Close roll entry window
+    if vRoll.window ~= nil then
+        vRoll.window.close()
+    end
 
     if vRoll.bTower == true then
         RRTowerManager.sendTower(vRoll, vSource, vTargets);

@@ -77,6 +77,9 @@ end
 ---@param rSource table the same info to be passed to the manualRolls
 ---@param aTargets table the same info to be passed to the manualRolls
 function sendTower(rRoll, rSource, aTargets)
+	--Ensure roll is secret and will be bypassed on host
+	rRoll.bReturnTower = true
+    rRoll.bSecret = true
     local msgOOB = RRActionManager.OOBifyAction(rRoll, rSource, aTargets, OOB_MSGTYPE_DICETOWER);
 
     Comm.deliverOOBMessage(msgOOB, "");

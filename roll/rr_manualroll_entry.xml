@@ -4,10 +4,29 @@
 <!-- Adds the hidden string control for the CT node ID so that all controls
     can be indexed through to see if the player has no more rolls.-->
 <root>
+    <template name="drag_roll_button" >
+        <diecontrol>
+            <anchored width="35" height="35" />
+            <tooltip textres="button_dialog_roll" />
+            <script>
+                function onDoubleClick(x, y)
+                    window.processRoll();
+                    return true;
+                end
+                function onDragStart(button, x, y, draginfo)
+                    window.drag(draginfo);
+                    return true;
+                end
+            </script>
+        </diecontrol>
+    </template>
     <windowclass name="manualroll_entry" merge="join">
 	    <script file="roll/scripts/rr_manualroll_entry.lua" />
         <sheetdata>
             <hs name="CTNodeID"/>
+            <drag_roll_button name="drag_roll">
+                <anchored to="button_ok" position="aboveleft" offset="0,-5" />
+            </drag_roll_button>
         </sheetdata>
     </windowclass>
 </root>
